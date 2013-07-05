@@ -49,6 +49,7 @@ module Data.Conduit.TMChan ( -- * Bounded Channel Connectors
                            -- * Parallel Combinators
                            , (>=<)
                            , mergeSources
+                           , mergeSources'
                            ) where
 
 import Control.Applicative
@@ -165,4 +166,23 @@ mergeSources sx bound = do c <- liftSTM $ newTBMChan bound
                            refcount <- liftSTM . newTVar $ length sx
                            mapM_ (\s -> resourceForkIO $ s $$ chanSink c writeTBMChan $ decRefcount refcount) sx
                            return $ sourceTBMChan c
+
+
+-- | Merges a list of sources, putting them all into a bounded channel, and
+--   returns a source which can be pulled from to pull from all the given
+--   sources in a first-come-first-serve basis.
+--
+--   The order of the new source's data is undefined, but it will be some
+--   combination of the given sources.
+--
+--   All the channels are closed as soon as any of the sources finishes.
+mergeSources' :: (MonadIO m, MonadBaseControl IO m)
+              => [Source (ResourceT m) a] -- ^ The sources to merge.
+              -> Int -- ^ The bound of the intermediate channel.
+              -> ResourceT m (Source (ResourceT m) a)
+mergeSources' sx bound = do
+    c <- liftSTM $ newTBMChan bound
+    mapM_ (\s -> resourceForkIO $
+                    s $$ chanSink c writeTBMChan closeTBMChan) sx
+    return $ sourceTBMChan c
 
